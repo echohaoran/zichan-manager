@@ -121,3 +121,19 @@ export interface AssetCreate {
   asset_code: string;
   sn: string;
 }
+
+export interface VersionInfo {
+  version: string;
+  commit: string;
+  commit_full: string;
+  commit_date: string;
+  tag: string;
+}
+
+export interface UpdateCheckResult {
+  has_update: boolean;
+  current_commit?: string;
+  latest_commit?: string;
+  changes?: string;
+  error?: string;
+}

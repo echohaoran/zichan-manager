@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Layout, Menu, Avatar, Dropdown, Space, Drawer, Button } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Space, Drawer, Button, Modal, Spin, Tag, Typography, message } from 'antd';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
   DashboardOutlined,
@@ -12,9 +12,11 @@ import {
   BankOutlined,
   MenuOutlined,
   SettingOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import client from '../api/client';
-import type { User } from '../types';
+import type { User, VersionInfo, UpdateCheckResult } from '../types';
+import dayjs from 'dayjs';
 
 const { Header, Sider, Content } = Layout;
 
@@ -29,6 +31,12 @@ export default function AppLayout() {
     return stored ? JSON.parse(stored) : null;
   });
 
+  const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
+  const [versionModalOpen, setVersionModalOpen] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheckResult | null>(null);
+
   useEffect(() => {
     const checkMobile = () => {
       const mobile = window.innerWidth < 768;
@@ -42,6 +50,47 @@ export default function AppLayout() {
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
+
+  const fetchVersion = async () => {
+    try {
+      const res = await client.get('/api/version');
+      setVersionInfo(res.data);
+    } catch {
+      // ignore on error
+    }
+  };
+
+  useEffect(() => {
+    fetchVersion();
+  }, []);
+
+  const handleCheckUpdate = async () => {
+    setChecking(true);
+    setUpdateCheck(null);
+    try {
+      const res = await client.get<UpdateCheckResult>('/api/version/check-update');
+      setUpdateCheck(res.data);
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '检查更新失败');
+    }
+    setChecking(false);
+  };
+
+  const handleUpdate = async () => {
+    setUpdating(true);
+    try {
+      const res = await client.post('/api/version/update');
+      if (res.data.success) {
+        message.success('更新并部署完成，页面即将刷新...');
+        setTimeout(() => window.location.reload(), 3000);
+      } else {
+        message.error(res.data.error || '更新失败');
+      }
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '更新失败');
+    }
+    setUpdating(false);
+  };
 
   const isAdmin = user?.role === 'admin' || user?.role === '管理员';
 
@@ -114,6 +163,10 @@ export default function AppLayout() {
     />
   );
 
+  const versionText = versionInfo
+    ? (versionInfo.tag || versionInfo.commit || 'dev')
+    : '...';
+
   const logoSection = (
     <div
       style={{
@@ -123,6 +176,7 @@ export default function AppLayout() {
         justifyContent: collapsed && !isMobile ? 'center' : 'flex-start',
         padding: collapsed && !isMobile ? '0 16px' : '0 24px',
         borderBottom: '1px solid rgba(0, 0, 0, 0.06)',
+        gap: collapsed && !isMobile ? 0 : 10,
       }}
     >
       <img
@@ -134,11 +188,86 @@ export default function AppLayout() {
           transition: 'all 0.3s ease',
         }}
       />
+      {(!collapsed || isMobile) && (
+        <Tag
+          color="blue"
+          style={{
+            cursor: 'pointer',
+            borderRadius: 10,
+            fontSize: 11,
+            lineHeight: '18px',
+            margin: 0,
+            padding: '0 8px',
+          }}
+          onClick={() => {
+            setVersionModalOpen(true);
+            setUpdateCheck(null);
+          }}
+        >
+          {versionText}
+        </Tag>
+      )}
     </div>
+  );
+
+  const versionModal = (
+    <Modal
+      title="版本信息"
+      open={versionModalOpen}
+      onCancel={() => { setVersionModalOpen(false); setUpdateCheck(null); }}
+      footer={[
+        <Button key="check" icon={<ReloadOutlined />} loading={checking} onClick={handleCheckUpdate}>
+          检查更新
+        </Button>,
+        ...(updateCheck?.has_update && isAdmin ? [
+          <Button key="update" type="primary" danger loading={updating} onClick={handleUpdate}>
+            更新并重新部署
+          </Button>,
+        ] : []),
+        <Button key="close" onClick={() => { setVersionModalOpen(false); setUpdateCheck(null); }}>
+          关闭
+        </Button>,
+      ]}
+    >
+      {versionInfo ? (
+        <div style={{ lineHeight: 2 }}>
+          <p><Tag color="blue">版本</Tag> {versionInfo.version || '-'}</p>
+          <p><Tag color="geekblue">Commit</Tag> {versionInfo.commit || '-'}</p>
+          <p><Tag>日期</Tag> {versionInfo.commit_date ? dayjs(versionInfo.commit_date).format('YYYY-MM-DD HH:mm') : '-'}</p>
+          {updateCheck?.has_update && (
+            <div style={{
+              marginTop: 12,
+              padding: 12,
+              background: '#fffbe6',
+              border: '1px solid #ffe58f',
+              borderRadius: 8,
+            }}>
+              <Typography.Text strong style={{ color: '#faad14' }}>发现新版本</Typography.Text>
+              <br />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                当前: {updateCheck.current_commit} → 最新: {updateCheck.latest_commit}
+              </Typography.Text>
+              {updateCheck.changes && (
+                <pre style={{ fontSize: 11, marginTop: 8, color: '#666' }}>{updateCheck.changes}</pre>
+              )}
+            </div>
+          )}
+          {updateCheck && !updateCheck.has_update && (
+            <div style={{ marginTop: 12, color: '#52c41a' }}>
+              <Typography.Text strong>✓ 已是最新版本</Typography.Text>
+            </div>
+          )}
+        </div>
+      ) : (
+        <Spin />
+      )}
+    </Modal>
   );
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
+      {versionModal}
+
       {/* Mobile Header */}
       {isMobile && (
         <Header
@@ -213,8 +342,14 @@ export default function AppLayout() {
               background: '#ffffff',
             }}
           >
-            <div style={{ fontSize: 12, color: '#86868b', textAlign: 'center' }}>
-              资产管理系统 v1.0
+            <div
+              style={{ fontSize: 12, color: '#86868b', textAlign: 'center', cursor: 'pointer' }}
+              onClick={() => {
+                setVersionModalOpen(true);
+                setUpdateCheck(null);
+              }}
+            >
+              资产管理系统 {versionText}
             </div>
           </div>
         </Drawer>

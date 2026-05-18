@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -66,6 +66,27 @@ def create_asset(req: AssetCreate, db: Session = Depends(get_db), user: User = D
     return _asset_to_out(asset, db)
 
 
+
+def _parse_purchase_date(date_str):
+    if not date_str:
+        return datetime.utcnow()
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        pass
+    try:
+        serial = int(date_str)
+        if 30000 < serial < 100000:
+            return datetime(1899, 12, 30) + timedelta(days=serial)
+    except (ValueError, TypeError):
+        pass
+    from email.utils import parsedate_to_datetime
+    try:
+        return parsedate_to_datetime(date_str)
+    except Exception:
+        pass
+    raise HTTPException(status_code=400, detail=f"无法解析日期: {date_str}")
+
 @router.post("/batch-import", response_model=list[AssetOut])
 def batch_import_assets(items: List[AssetImportItem], db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     created = []
@@ -75,7 +96,7 @@ def batch_import_assets(items: List[AssetImportItem], db: Session = Depends(get_
         category_id = cats.get(item.category_name)
         if not category_id:
             raise HTTPException(status_code=400, detail=f"分类 '{item.category_name}' 不存在，请先创建该分类")
-        purchase_date = datetime.strptime(item.purchase_date, "%Y-%m-%d") if item.purchase_date else datetime.utcnow()
+        purchase_date = _parse_purchase_date(item.purchase_date)
         asset = Asset(
             name=item.name,
             category_id=category_id,

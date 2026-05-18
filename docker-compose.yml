@@ -1,10 +1,13 @@
 services:
   backend:
-    image: ghcr.io/echohaoran/asset-management-system/zichan-backend:latest
+    build:
+      context: ./backend
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - .:/project:rw
+      - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - ./backend/.env
     environment:
@@ -13,7 +16,10 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ghcr.io/echohaoran/asset-management-system/zichan-frontend:latest
+    build:
+      context: ./zichan-manager-frontend
+      args:
+        VITE_API_URL: ""
     ports:
       - "8080:80"
     depends_on:

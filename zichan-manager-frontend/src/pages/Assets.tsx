@@ -152,7 +152,7 @@ export default function Assets() {
     reader.onload = (ev) => {
       try {
         const data = new Uint8Array(ev.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
+        const workbook = XLSX.read(data, { type: "array", cellDates: true });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json<any>(sheet, { header: 1 });
         if (json.length < 2) {
@@ -195,7 +195,12 @@ export default function Assets() {
       for (let i = 0; i < rawHeaders.length; i++) {
         const mappedKey = fieldMapping[rawHeaders[i]];
         if (mappedKey) {
-          item[mappedKey] = row[i] !== undefined ? String(row[i]) : '';
+          const val = row[i];
+          if (val instanceof Date && !isNaN(val.getTime())) {
+            item[mappedKey] = val.toISOString().split('T')[0];
+          } else {
+            item[mappedKey] = val !== undefined ? String(val) : '';
+          }
         }
       }
       return item;
@@ -237,18 +242,30 @@ export default function Assets() {
     }
     setImporting(true);
     try {
-      const payload = valid.map(item => ({
-        name: item.name,
-        category_name: item.category_name,
-        price: parseFloat(item.price) || 0,
-        purchase_date: item.purchase_date || '',
-        description: item.description || '',
-        model: item.model || '',
-        color: item.color || '',
-        asset_code: item.asset_code || '',
-        sn: item.sn || '',
-        status: item.status || '在库',
-      }));
+      const payload = valid.map(item => {
+        let purchaseDate = item.purchase_date || '';
+        if (purchaseDate instanceof Date && !isNaN(purchaseDate.getTime())) {
+          purchaseDate = purchaseDate.toISOString().split('T')[0];
+        } else if (typeof purchaseDate === 'string' && purchaseDate.match(/^\d{5}$/)) {
+          const d = new Date((parseInt(purchaseDate) - 25569) * 86400000);
+          purchaseDate = d.toISOString().split('T')[0];
+        } else if (typeof purchaseDate === 'string' && purchaseDate.includes('GMT')) {
+          const d = new Date(purchaseDate);
+          if (!isNaN(d.getTime())) purchaseDate = d.toISOString().split('T')[0];
+        }
+        return {
+          name: item.name,
+          category_name: item.category_name,
+          price: parseFloat(item.price) || 0,
+          purchase_date: purchaseDate,
+          description: item.description || '',
+          model: item.model || '',
+          color: item.color || '',
+          asset_code: item.asset_code || '',
+          sn: item.sn || '',
+          status: item.status || '在库',
+        };
+      });
       await client.post('/api/assets/batch-import', payload);
       message.success(`成功导入 ${payload.length} 条资产`);
       setPreviewOpen(false);

@@ -1,0 +1,7 @@
+__pycache__
+*.pyc
+zichan.db
+.env_example
+.git
+.gitignore
+*.md
