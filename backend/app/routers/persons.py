@@ -87,7 +87,7 @@ def batch_import_persons(items: List[PersonBatchImportItem], db: Session = Depen
         dept_id = None
         if item.department_name:
             if item.department_name not in departments:
-                dept = Department(name=item.department_name, description=从飞书导入)
+                dept = Department(name=item.department_name, description="飞书导入")
                 db.add(dept)
                 db.flush()
                 departments[item.department_name] = dept
@@ -97,7 +97,7 @@ def batch_import_persons(items: List[PersonBatchImportItem], db: Session = Depen
         existing_persons.add(item.name)
         created += 1
     db.commit()
-    return {created: created, skipped: skipped, total: len(items)}
+    return {"created": created, "skipped": skipped, "total": len(items)}
 
 
 def _person_to_out(person: Person, db: Session) -> PersonOut:
