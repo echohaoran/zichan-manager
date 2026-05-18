@@ -460,6 +460,7 @@ export default function Assets() {
           </Form.Item>
           <Form.Item name="asset_code" label="资产编码">
             <Input placeholder="留空则自动生成 wckg_XXXXX" />
+          </Form.Item>
           <Form.Item name="sn" label={<><span style={{color:'#ff3b30'}}>*</span> 设备SN</>} rules={[{ required: true, message: '请输入设备SN' }]}>
             <Input placeholder="若无则填'空'" />
           </Form.Item>
