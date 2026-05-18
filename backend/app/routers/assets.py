@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import random
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -42,12 +43,23 @@ def _asset_to_out(asset: Asset, db: Session) -> AssetOut:
     )
 
 
+
+def _generate_asset_code(db):
+    existing = {ac[0] for ac in db.query(Asset.asset_code).filter(Asset.asset_code.like('wckg_%')).all()}
+    for _ in range(100):
+        code = f"wckg_{random.randint(1, 99999):05d}"
+        if code not in existing:
+            return code
+    return f"wckg_{random.randint(100000, 999999):06d}"
+
 @router.post("", response_model=AssetOut)
 def create_asset(req: AssetCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     cat = db.query(Category).filter(Category.id == req.category_id).first()
     if not cat:
         raise HTTPException(status_code=400, detail="分类不存在")
     purchase_date = datetime.strptime(req.purchase_date, "%Y-%m-%d") if req.purchase_date else datetime.utcnow()
+    if not req.asset_code:
+        req.asset_code = _generate_asset_code(db)
     asset = Asset(
         name=req.name,
         category_id=req.category_id,
@@ -124,6 +136,8 @@ def list_assets(
     status: Optional[str] = Query(None),
     category_id: Optional[int] = Query(None),
     keyword: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -134,6 +148,20 @@ def list_assets(
         q = q.filter(Asset.category_id == category_id)
     if keyword:
         q = q.filter(Asset.name.contains(keyword))
+    if start_date:
+        try:
+            sd = datetime.strptime(start_date, "%Y-%m-%d")
+            q = q.filter(Asset.purchase_date >= sd)
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            ed = datetime.strptime(end_date, "%Y-%m-%d")
+            # Include assets up to end of day
+            from datetime import timedelta as td
+            q = q.filter(Asset.purchase_date < ed + td(days=1))
+        except ValueError:
+            pass
     assets = q.order_by(desc(Asset.updated_at)).all()
     return [_asset_to_out(a, db) for a in assets]
 

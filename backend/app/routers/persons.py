@@ -1,9 +1,10 @@
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from app.database import get_db
 from app.models import Person, Asset, Department
-from app.schemas import PersonCreate, PersonOut, PersonWithAssets, AssetOut
+from app.schemas import PersonCreate, PersonOut, PersonWithAssets, AssetOut, PersonBatchImportItem
 from app.auth import get_current_user
 from app.routers.assets import _asset_to_out as _convert_asset_to_out
 
@@ -70,6 +71,33 @@ def get_person_assets(person_id: int, db: Session = Depends(get_db), user=Depend
         created_at=person.created_at,
         assets=[_convert_asset_to_out(a, db) for a in assets],
     )
+
+
+
+@router.post("/batch-import")
+def batch_import_persons(items: List[PersonBatchImportItem], db: Session = Depends(get_db), user=Depends(get_current_user)):
+    existing_persons = {p.name for p in db.query(Person).all()}
+    departments = {d.name: d for d in db.query(Department).all()}
+    created = 0
+    skipped = 0
+    for item in items:
+        if item.name in existing_persons:
+            skipped += 1
+            continue
+        dept_id = None
+        if item.department_name:
+            if item.department_name not in departments:
+                dept = Department(name=item.department_name, description=从飞书导入)
+                db.add(dept)
+                db.flush()
+                departments[item.department_name] = dept
+            dept_id = departments[item.department_name].id
+        person = Person(name=item.name, department_id=dept_id)
+        db.add(person)
+        existing_persons.add(item.name)
+        created += 1
+    db.commit()
+    return {created: created, skipped: skipped, total: len(items)}
 
 
 def _person_to_out(person: Person, db: Session) -> PersonOut:

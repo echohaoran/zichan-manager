@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, DatePicker, Space, Tag, message } from 'antd';
+const { RangePicker } = DatePicker;
 import { PlusOutlined, SearchOutlined, DownloadOutlined, UploadOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -33,6 +34,8 @@ export default function Assets() {
   const [detailAsset, setDetailAsset] = useState<Asset | null>(null);
   const [form] = Form.useForm();
   const [keyword, setKeyword] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
+  const [dateRange, setDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
   const [persons, setPersons] = useState<Person[]>([]);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkoutAssetId, setCheckoutAssetId] = useState<number | null>(null);
@@ -54,6 +57,9 @@ export default function Assets() {
     setLoading(true);
     const params: any = {};
     if (keyword) params.keyword = keyword;
+    if (statusFilter) params.status = statusFilter;
+    if (dateRange && dateRange[0]) params.start_date = dateRange[0].format('YYYY-MM-DD');
+    if (dateRange && dateRange[1]) params.end_date = dateRange[1].format('YYYY-MM-DD');
     const res = await client.get('/api/assets', { params });
     setAssets(res.data);
     setLoading(false);
@@ -398,7 +404,7 @@ export default function Assets() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16 }}>
+      <Space style={{ marginBottom: 12 }}>
         <Input placeholder="搜索资产名称" value={keyword} onChange={(e) => setKeyword(e.target.value)} onPressEnter={fetchAssets} prefix={<SearchOutlined />} style={{ width: 250 }} />
         <Button type="primary" onClick={fetchAssets}>搜索</Button>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增资产</Button>
@@ -406,6 +412,25 @@ export default function Assets() {
         <Button onClick={handleDownloadTemplate}>下载导入模板</Button>
         <Button icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()}>上传</Button>
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={handleFileSelect} />
+      </Space>
+      <Space style={{ marginBottom: 16 }} wrap>
+        <span style={{ color: '#86868b', fontSize: 13 }}>状态:</span>
+        <Select
+          allowClear
+          placeholder="全部状态"
+          style={{ width: 120 }}
+          value={statusFilter}
+          onChange={(v) => { setStatusFilter(v); }}
+          options={STATUS_OPTIONS.map(s => ({ label: s, value: s }))}
+        />
+        <span style={{ color: '#86868b', fontSize: 13 }}>购买日期:</span>
+        <RangePicker
+          style={{ width: 240 }}
+          value={dateRange as any}
+          onChange={(dates) => { setDateRange(dates as any); }}
+          placeholder={['开始日期', '结束日期']}
+        />
+        <Button onClick={fetchAssets}>筛选</Button>
       </Space>
 
       <Table columns={columns} dataSource={assets} rowKey="id" loading={loading} showSorterTooltip={false} />
@@ -433,9 +458,8 @@ export default function Assets() {
           <Form.Item name="color" label="颜色">
             <Input />
           </Form.Item>
-          <Form.Item name="asset_code" label={<><span style={{color:'#ff3b30'}}>*</span> 资产编码</>} rules={[{ required: true, message: '请输入资产编码' }]}>
-            <Input />
-          </Form.Item>
+          <Form.Item name="asset_code" label="资产编码">
+            <Input placeholder="留空则自动生成 wckg_XXXXX" />
           <Form.Item name="sn" label={<><span style={{color:'#ff3b30'}}>*</span> 设备SN</>} rules={[{ required: true, message: '请输入设备SN' }]}>
             <Input placeholder="若无则填'空'" />
           </Form.Item>

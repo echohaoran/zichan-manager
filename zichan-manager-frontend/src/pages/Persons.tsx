@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Table, Button, Modal, Form, Input, Space, message, Select, Tag, List, Checkbox, Spin, AutoComplete } from 'antd';
+import { useEffect, useState, useCallback } from 'react';
+import { Table, Button, Modal, Form, Input, Space, message, Select, Tag, List, Checkbox, Spin, AutoComplete, Divider } from 'antd';
 import { PlusOutlined, LinkOutlined, DownOutlined, RightOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import client from '../api/client';
@@ -110,6 +110,7 @@ export default function Persons() {
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [totalStats, setTotalStats] = useState({ departments: 0, users: 0 });
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
+  const [selectedDeptIds, setSelectedDeptIds] = useState<Set<string>>(new Set());
 
   // 搜索飞书用户
   const [searchResults, setSearchResults] = useState<FeishuContactMember[]>([]);
@@ -236,6 +237,7 @@ export default function Persons() {
     setFeishuOpen(true);
     setFeishuLoading(true);
     setSelectedMembers({});
+    setSelectedDeptIds(new Set());
     setFeishuSearch('');
     setExpandedKeys([]);
     try {
@@ -282,6 +284,72 @@ export default function Persons() {
     });
   };
 
+  const findDeptById = (nodes: FeishuDepartmentTree[], id: string): FeishuDepartmentTree | null => {
+    for (const node of nodes) {
+      if (node.open_department_id === id) return node;
+      const found = findDeptById(node.children || [], id);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  const collectAllDeptMembers = useCallback((nodes: FeishuDepartmentTree[]): { member: FeishuContactMember; deptName: string }[] => {
+    const results: { member: FeishuContactMember; deptName: string }[] = [];
+    for (const node of nodes) {
+      for (const m of (node.members || [])) {
+        results.push({ member: m, deptName: node.name });
+      }
+      results.push(...collectAllDeptMembers(node.children || []));
+    }
+    return results;
+  }, []);
+
+  const collectSubDeptIds = useCallback((node: FeishuDepartmentTree): string[] => {
+    const ids = [node.open_department_id];
+    for (const child of (node.children || [])) {
+      ids.push(...collectSubDeptIds(child));
+    }
+    return ids;
+  }, []);
+
+  const toggleDept = (deptId: string) => {
+    const dept = findDeptById(feishuTree, deptId);
+    if (!dept) return;
+    const isChecked = selectedDeptIds.has(deptId);
+    
+    if (isChecked) {
+      const subIds = collectSubDeptIds(dept);
+      const membersToRemove = collectAllDeptMembers([dept]);
+      setSelectedDeptIds(prev => {
+        const next = new Set(prev);
+        subIds.forEach(id => next.delete(id));
+        return next;
+      });
+      setSelectedMembers(prev => {
+        const next = { ...prev };
+        membersToRemove.forEach(({ member }) => delete next[member.open_id]);
+        return next;
+      });
+    } else {
+      const subIds = collectSubDeptIds(dept);
+      const membersToAdd = collectAllDeptMembers([dept]);
+      setSelectedDeptIds(prev => {
+        const next = new Set(prev);
+        subIds.forEach(id => next.add(id));
+        return next;
+      });
+      setSelectedMembers(prev => {
+        const next = { ...prev };
+        membersToAdd.forEach(({ member, deptName }) => {
+          if (!next[member.open_id]) {
+            next[member.open_id] = { member, deptName };
+          }
+        });
+        return next;
+      });
+    }
+  };
+
   const handleFeishuSync = async () => {
     const members = Object.values(selectedMembers);
     if (members.length === 0) {
@@ -290,47 +358,25 @@ export default function Persons() {
     }
     setSyncing(true);
     try {
-      const deptsRes = await client.get('/api/departments');
-      const existingDepts: Record<string, Department> = {};
-      for (const d of deptsRes.data) {
-        existingDepts[d.name] = d;
-      }
-
-      const existingPersons: Record<string, Person> = {};
-      for (const p of persons) {
-        existingPersons[p.name] = p;
-      }
-
-      for (const { member: m, deptName } of members) {
-        if (existingPersons[m.name]) continue;
-
-        let deptId: number | undefined;
-        if (deptName) {
-          if (existingDepts[deptName]) {
-            deptId = existingDepts[deptName].id;
-          } else {
-            const dRes = await client.post('/api/departments', { name: deptName });
-            existingDepts[deptName] = dRes.data;
-            deptId = dRes.data.id;
-          }
-        }
-
-        await client.post('/api/persons', {
-          name: m.name,
-          department_id: deptId || null,
-        });
-      }
-
-      message.success(`成功同步 ${members.length} 位成员`);
+      const payload = members.map(({ member: m, deptName }) => ({
+        name: m.name,
+        department_name: deptName || '',
+      }));
+      const res = await client.post('/api/persons/batch-import', payload);
+      const { created, skipped } = res.data;
+      let msg = '成功同步';
+      if (created > 0) msg += ' ' + created + ' 位成员';
+      if (skipped > 0) msg += '，跳过 ' + skipped + ' 位已存在';
+      message.success(msg);
       setFeishuOpen(false);
       fetch();
-    } catch {
-      message.error('同步失败');
+    } catch (err: any) {
+      message.error('同步失败: ' + (err.response?.data?.detail || err.message));
     }
     setSyncing(false);
   };
 
-  const viewAssets = async (person: Person) => {
+const viewAssets = async (person: Person) => {
     try {
       const res = await client.get(`/api/persons/${person.id}/assets`);
       setPersonAssets(res.data.assets || []);
@@ -450,6 +496,7 @@ export default function Persons() {
                     department={dept}
                     expandedKeys={expandedKeys}
                     selectedMembers={selectedMembers}
+                    selectedDeptIds={selectedDeptIds}
                     searchText={feishuSearch}
                     onToggleExpand={(key) => {
                       if (expandedKeys.includes(key)) {
@@ -461,105 +508,42 @@ export default function Persons() {
                     onSelectMember={(member, deptName) => toggleMember(member, deptName)}
                     onSelectDept={(deptName) => setSelectedDept(deptName)}
                     selectedDept={selectedDept}
+                    onToggleDept={toggleDept}
+                    collectAllDeptMembers={collectAllDeptMembers}
+                    collectSubDeptIds={collectSubDeptIds}
                   />
                 ))}
               </div>
               <div style={{ flex: 1, overflow: 'auto', maxHeight: 400 }}>
                 {(() => {
-                  // 收集所有部门的所有成员
-                  const collectAllMembers = (nodes: FeishuDepartmentTree[]): FeishuContactMember[] => {
-                    const results: FeishuContactMember[] = [];
-                    const traverse = (node: FeishuDepartmentTree) => {
-                      if (node.members) {
-                        for (const m of node.members) {
-                          results.push({ ...m, department_name: node.name });
-                        }
-                      }
-                      if (node.children) {
-                        node.children.forEach(traverse);
-                      }
-                    };
-                    nodes.forEach(traverse);
-                    return results;
-                  };
-
-                  // 如果有搜索关键词，搜索所有成员
-                  if (feishuSearch) {
-                    const allMembers = collectAllMembers(feishuTree);
-                    const filtered = allMembers.filter(m =>
-                      m.name.toLowerCase().includes(feishuSearch.toLowerCase())
-                    );
-                    return filtered.length > 0 ? (
-                      <List
-                        dataSource={filtered}
-                        renderItem={(m) => (
-                          <List.Item
-                            key={m.open_id}
-                            onClick={() => toggleMember(m, m.department_name || '')}
-                            style={{
-                              cursor: 'pointer',
-                              padding: '8px 12px',
-                              borderRadius: 6,
-                              background: selectedMembers[m.open_id] ? '#e6f4ff' : 'transparent',
-                            }}
-                          >
-                            <Checkbox checked={!!selectedMembers[m.open_id]} />
-                            <span style={{ marginLeft: 8, fontWeight: 500 }}>{m.name}</span>
-                            <span style={{ marginLeft: 8, color: '#0071e3', fontSize: 12 }}>
-                              {m.department_name}
-                            </span>
-                            {m.email && (
-                              <span style={{ marginLeft: 8, color: '#86868b', fontSize: 12 }}>
-                                {m.email}
-                              </span>
-                            )}
-                          </List.Item>
-                        )}
-                      />
-                    ) : (
-                      <div style={{ padding: 48, textAlign: 'center', color: '#86868b' }}>
-                        未找到匹配的人员
-                      </div>
-                    );
-                  }
-
-                  // 无搜索时显示选中部门的成员
-                  if (!selectedDept) {
+                  const selectedList = Object.values(selectedMembers);
+                  if (selectedList.length === 0) {
                     return (
                       <div style={{ padding: 48, textAlign: 'center', color: '#86868b' }}>
-                        请选择左侧部门查看成员
+                        <div style={{ fontSize: 14, marginBottom: 8 }}>请选择人员</div>
+                        <div style={{ fontSize: 12 }}>在左侧勾选部门或右侧勾选成员</div>
                       </div>
                     );
                   }
-
-                  const collectMembers = (nodes: FeishuDepartmentTree[], targetDept: string): FeishuContactMember[] => {
-                    const results: FeishuContactMember[] = [];
-                    const search = (node: FeishuDepartmentTree) => {
-                      if (node.name === targetDept) {
-                        results.push(...(node.members || []));
-                      }
-                      node.children?.forEach(search);
-                    };
-                    nodes.forEach(search);
-                    return results;
-                  };
-                  const deptMembers = collectMembers(feishuTree, selectedDept);
-                  return deptMembers.length > 0 ? (
+                  return (
                     <List
-                      dataSource={deptMembers}
-                      renderItem={(m) => (
+                      dataSource={selectedList}
+                      renderItem={({ member: m, deptName }) => (
                         <List.Item
                           key={m.open_id}
-                          onClick={() => toggleMember(m, selectedDept)}
+                          onClick={() => toggleMember(m, deptName)}
                           style={{
                             cursor: 'pointer',
                             padding: '8px 12px',
                             borderRadius: 6,
-                            background: selectedMembers[m.open_id] ? '#e6f4ff' : 'transparent',
+                            background: selectedMembers[m.open_id] ? '#e6f4ff' : '#fafafa',
                           }}
                         >
                           <Checkbox checked={!!selectedMembers[m.open_id]} />
                           <span style={{ marginLeft: 8, fontWeight: 500 }}>{m.name}</span>
+                          <span style={{ marginLeft: 8, color: '#0071e3', fontSize: 12 }}>
+                            {deptName}
+                          </span>
                           {m.email && (
                             <span style={{ marginLeft: 8, color: '#86868b', fontSize: 12 }}>
                               {m.email}
@@ -568,10 +552,6 @@ export default function Persons() {
                         </List.Item>
                       )}
                     />
-                  ) : (
-                    <div style={{ padding: 48, textAlign: 'center', color: '#86868b' }}>
-                      该部门暂无成员
-                    </div>
                   );
                 })()}
               </div>

@@ -227,3 +227,7 @@ class FeishuContactsResponse(BaseModel):
     departments: List[FeishuDepartmentTree] = []
     total_departments: int = 0
     total_users: int = 0
+
+class PersonBatchImportItem(BaseModel):
+    name: str
+    department_name: Optional[str] = None
