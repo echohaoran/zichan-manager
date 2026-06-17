@@ -6,7 +6,7 @@ from sqlalchemy import desc
 from typing import Optional, List
 from app.database import get_db
 from app.models import Asset, AssetLog, Category, Person, User
-from app.schemas import AssetCreate, AssetUpdate, AssetOut, AssetLogOut, AssetImportItem
+from app.schemas import AssetCreate, AssetUpdate, AssetOut, AssetLogOut, AssetImportItem, AssetBatchImportResponse
 from app.auth import get_current_user
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
@@ -99,15 +99,45 @@ def _parse_purchase_date(date_str):
         pass
     raise HTTPException(status_code=400, detail=f"无法解析日期: {date_str}")
 
-@router.post("/batch-import", response_model=list[AssetOut])
+@router.post("/batch-import", response_model=AssetBatchImportResponse)
 def batch_import_assets(items: List[AssetImportItem], db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     created = []
     # cache category name -> id
     cats = {c.name: c.id for c in db.query(Category).all()}
+
+    # 缓存现有人员（按去除两端空格的姓名匹配），并跟踪本批内新建的人员避免重复
+    existing_persons = {p.name.strip(): p for p in db.query(Person).all()}
+    created_persons_in_batch: dict = {}
+    persons_matched = 0
+    persons_new = 0
+
     for item in items:
         category_id = cats.get(item.category_name)
         if not category_id:
             raise HTTPException(status_code=400, detail=f"分类 '{item.category_name}' 不存在，请先创建该分类")
+
+        # —— 解析领用人：匹配现有人员，未命中则自动新建 ——
+        person_id = None
+        person_name_resolved = (item.person_name or "").strip()
+        if person_name_resolved:
+            if person_name_resolved in existing_persons:
+                person_id = existing_persons[person_name_resolved].id
+                persons_matched += 1
+            elif person_name_resolved in created_persons_in_batch:
+                person_id = created_persons_in_batch[person_name_resolved].id
+            else:
+                new_person = Person(name=person_name_resolved, department_id=None)
+                db.add(new_person)
+                db.flush()
+                existing_persons[person_name_resolved] = new_person
+                created_persons_in_batch[person_name_resolved] = new_person
+                persons_new += 1
+
+        # 状态自洽：有领用人且状态为"在库"或未填时，自动升级为"领用中"
+        status = item.status or "在库"
+        if person_id is not None and status == "在库":
+            status = "领用中"
+
         purchase_date = _parse_purchase_date(item.purchase_date)
         asset = Asset(
             name=item.name,
@@ -119,16 +149,31 @@ def batch_import_assets(items: List[AssetImportItem], db: Session = Depends(get_
             color=item.color,
             asset_code=item.asset_code,
             sn=item.sn,
-            status=item.status,
+            status=status,
+            person_id=person_id,
         )
         db.add(asset)
         db.flush()
-        _add_log(db, asset.id, "登记", user.id, f"批量导入: {item.name}")
+
+        # 日志：包含领用人信息，标注是否本次新建
+        log_detail = f"批量导入: {item.name}"
+        if person_name_resolved:
+            suffix = "（新建）" if person_name_resolved in created_persons_in_batch else ""
+            log_detail += f"，领用人: {person_name_resolved}{suffix}"
+        _add_log(db, asset.id, "登记", user.id, log_detail)
+
         created.append(asset)
+
     db.commit()
     for a in created:
         db.refresh(a)
-    return [_asset_to_out(a, db) for a in created]
+
+    return AssetBatchImportResponse(
+        created=len(created),
+        persons_created=persons_new,
+        persons_matched=persons_matched,
+        assets=[_asset_to_out(a, db) for a in created],
+    )
 
 
 @router.get("", response_model=list[AssetOut])

@@ -178,6 +178,21 @@ class AssetImportItem(BaseModel):
     asset_code: str = ""
     sn: str = ""
     status: str = "在库"
+    person_name: Optional[str] = None
+
+
+class AssetBatchImportResponse(BaseModel):
+    """批量导入资产的结果汇总。
+
+    - created: 实际创建的资产数
+    - persons_created: 本次导入中新建的人员数（去重后）
+    - persons_matched: 命中现有人员的次数（同一人员多次出现都计入）
+    - assets: 创建出来的资产对象
+    """
+    created: int
+    persons_created: int
+    persons_matched: int
+    assets: List[AssetOut]
 
 
 class FeishuLoginRequest(BaseModel):

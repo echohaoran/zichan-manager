@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Select, DatePicker, Space, Tag, message } from 'antd';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, DatePicker, Space, Tag, message, AutoComplete } from 'antd';
 const { RangePicker } = DatePicker;
 import { PlusOutlined, SearchOutlined, DownloadOutlined, UploadOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
@@ -19,6 +19,7 @@ const ASSET_FIELDS = [
   { key: 'purchase_date', label: '购买日期', required: false },
   { key: 'description', label: '描述', required: false },
   { key: 'status', label: '状态', required: false },
+  { key: 'person_name', label: '领用人', required: false },
 ];
 
 const STATUS_OPTIONS = ['在库', '领用中', '已报废'];
@@ -133,7 +134,7 @@ export default function Assets() {
         '价格': 5000,
         '购买日期': '2024-01-15',
         '状态': '在库',
-        '领用人': '',
+        '领用人': '张三',
         '设备SN': 'SN123456',
         '描述': '示例描述',
       },
@@ -270,12 +271,22 @@ export default function Assets() {
           asset_code: item.asset_code || '',
           sn: item.sn || '',
           status: item.status || '在库',
+          person_name: (item.person_name || '').trim(),
         };
       });
-      await client.post('/api/assets/batch-import', payload);
-      message.success(`成功导入 ${payload.length} 条资产`);
+      const res = await client.post('/api/assets/batch-import', payload);
+      const data = res.data;
+      const parts = [`成功导入 ${data.created} 条资产`];
+      if (data.persons_created > 0) {
+        parts.push(`自动新建 ${data.persons_created} 个人员`);
+      }
+      if (data.persons_matched > 0) {
+        parts.push(`匹配 ${data.persons_matched} 个已有人员`);
+      }
+      message.success(parts.join('，'));
       setPreviewOpen(false);
       fetchAssets();
+      fetchPersons();
     } catch (err: any) {
       message.error(err.response?.data?.detail || '导入失败');
     }
@@ -586,7 +597,7 @@ export default function Assets() {
             bordered
             columns={[
               { title: '#', key: 'index', width: 40, render: (_: any, __: any, i: number) => i + 1 },
-              ...ASSET_FIELDS.filter(f => f.key !== 'status').map(f => ({
+              ...ASSET_FIELDS.filter(f => f.key !== 'status' && f.key !== 'person_name').map(f => ({
                 title: f.label + (f.required ? ' *' : ''),
                 dataIndex: f.key,
                 key: f.key,
@@ -656,6 +667,23 @@ export default function Assets() {
                       <Select.Option key={s} value={s}>{s}</Select.Option>
                     ))}
                   </Select>
+                ),
+              },
+              {
+                title: '领用人', key: 'person_name',
+                width: 140,
+                render: (_: any, record: any, index?: number) => (
+                  <AutoComplete
+                    size="small"
+                    style={{ width: '100%' }}
+                    value={record.person_name || ''}
+                    options={persons.map(p => ({ value: p.name }))}
+                    filterOption={(input, option) =>
+                      (option?.value as string)?.includes(input)
+                    }
+                    onChange={(v) => updatePreviewRow(index!, 'person_name', v)}
+                    placeholder="选填：选已有或填新名"
+                  />
                 ),
               },
               {
