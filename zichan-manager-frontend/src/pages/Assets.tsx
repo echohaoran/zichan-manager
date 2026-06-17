@@ -8,19 +8,40 @@ import * as XLSX from 'xlsx';
 import client from '../api/client';
 import type { Asset, Category, AssetCreate, Person } from '../types';
 
-const ASSET_FIELDS = [
-  { key: 'name', label: '资产名称', required: true },
-  { key: 'category_name', label: '分类名称', required: true },
-  { key: 'asset_code', label: '资产编码', required: false },
-  { key: 'model', label: '型号', required: false },
-  { key: 'color', label: '颜色', required: false },
-  { key: 'price', label: '价格', required: false },
-  { key: 'sn', label: '设备SN', required: false },
-  { key: 'purchase_date', label: '购买日期', required: false },
-  { key: 'description', label: '描述', required: false },
-  { key: 'status', label: '状态', required: false },
-  { key: 'person_name', label: '领用人', required: false },
+const ASSET_FIELDS: { key: string; label: string; required: boolean; aliases?: string[] }[] = [
+  { key: 'name', label: '资产名称', required: true, aliases: ['资产名', '名称', '设备名', '物料名', '物品名称'] },
+  { key: 'category_name', label: '分类名称', required: true, aliases: ['分类', '类别', '类型', '资产分类'] },
+  { key: 'asset_code', label: '资产编码', required: false, aliases: ['编码', '编号', '资产编号', '设备编号'] },
+  { key: 'model', label: '型号', required: false, aliases: ['规格', '规格型号', '型号规格'] },
+  { key: 'color', label: '颜色', required: false, aliases: ['色彩'] },
+  { key: 'price', label: '价格', required: false, aliases: ['金额', '单价', '价值', '采购价'] },
+  { key: 'sn', label: '设备SN', required: false, aliases: ['SN', 'SN码', '序列号', 'sn号'] },
+  { key: 'purchase_date', label: '购买日期', required: false, aliases: ['采购日期', '购置日期', '购入日期', '购买时间'] },
+  { key: 'description', label: '描述', required: false, aliases: ['说明', '备注', '描述说明'] },
+  { key: 'status', label: '状态', required: false, aliases: ['当前状态', '资产状态'] },
+  { key: 'person_name', label: '领用人', required: false, aliases: ['使用人', '持有人', '借用人', '领用人员', '使用人员', '借用人员', '使用者', '持有者', '借出对象', '使用对象', '领用对象', '经办人'] },
 ];
+
+// 智能匹配：把表头文本规整后与系统字段的 label + aliases 做比对
+// 优先精确匹配，再做子串匹配（双向包含）
+const matchFieldToKey = (header: string): string | null => {
+  const hClean = header.replace(/[*\s\u3000:：,，.。?？!！]/g, '').toLowerCase();
+  if (!hClean) return null;
+  for (const f of ASSET_FIELDS) {
+    const candidates = [f.label, ...(f.aliases || [])];
+    for (const c of candidates) {
+      const cClean = c.replace(/[*\s\u3000:：,，.。?？!！]/g, '').toLowerCase();
+      if (!cClean) continue;
+      if (hClean === cClean) return f.key;
+    }
+    for (const c of candidates) {
+      const cClean = c.replace(/[*\s\u3000:：,，.。?？!！]/g, '').toLowerCase();
+      if (!cClean) continue;
+      if (hClean.includes(cClean) || cClean.includes(hClean)) return f.key;
+    }
+  }
+  return null;
+};
 
 const STATUS_OPTIONS = ['在库', '领用中', '已报废'];
 
@@ -174,15 +195,42 @@ export default function Assets() {
         // auto-detect field mapping
         const mapping: Record<string, string> = {};
         for (const h of headers) {
-          const hClean = h.replace(/[*\s]/g, '').toLowerCase();
-          const matched = ASSET_FIELDS.find(f => {
-            const fClean = f.label.replace(/[*\s]/g, '').toLowerCase();
-            return hClean === fClean || hClean === f.key.toLowerCase() || hClean.includes(fClean) || fClean.includes(hClean);
-          });
-          if (matched) mapping[h] = matched.key;
+          const matched = matchFieldToKey(h);
+          if (matched) mapping[h] = matched;
         }
         setFieldMapping(mapping);
-        setImportModalOpen(true);
+
+        // 全部自动识别成功则跳过字段映射 Modal，直接进预览
+        const allMapped = headers.every(h => mapping[h]);
+        if (allMapped) {
+          const preview = (rows as any[][]).map((row) => {
+            const item: Record<string, any> = {};
+            for (const field of ASSET_FIELDS) {
+              item[field.key] = '';
+            }
+            item._key = Math.random().toString(36).slice(2);
+            for (let i = 0; i < headers.length; i++) {
+              const mappedKey = mapping[headers[i]];
+              if (mappedKey) {
+                const val = row[i];
+                if (val instanceof Date && !isNaN(val.getTime())) {
+                  item[mappedKey] = val.toISOString().split('T')[0];
+                } else {
+                  item[mappedKey] = val !== undefined ? String(val) : '';
+                }
+              }
+            }
+            return item;
+          });
+          setPreviewData(preview);
+          setImportModalOpen(false);
+          setPreviewOpen(true);
+          message.success(`已自动识别 ${headers.length} 个字段，可直接预览确认`);
+        } else {
+          const unmapped = headers.filter(h => !mapping[h]);
+          message.warning(`有 ${unmapped.length} 个字段未自动识别：${unmapped.join('、')}，请手动映射`);
+          setImportModalOpen(true);
+        }
       } catch {
         message.error('文件解析失败，请检查格式');
       }
@@ -192,15 +240,19 @@ export default function Assets() {
     e.target.value = '';
   };
 
-  const buildPreviewData = () => {
-    return rawData.map(row => {
+  const buildPreviewData = (
+    data: any[][] = rawData,
+    headers: string[] = rawHeaders,
+    mapping: Record<string, string> = fieldMapping,
+  ) => {
+    return data.map(row => {
       const item: Record<string, any> = {};
       for (const field of ASSET_FIELDS) {
         item[field.key] = '';
       }
       item._key = Math.random().toString(36).slice(2);
-      for (let i = 0; i < rawHeaders.length; i++) {
-        const mappedKey = fieldMapping[rawHeaders[i]];
+      for (let i = 0; i < headers.length; i++) {
+        const mappedKey = mapping[headers[i]];
         if (mappedKey) {
           const val = row[i];
           if (val instanceof Date && !isNaN(val.getTime())) {
@@ -543,7 +595,11 @@ export default function Assets() {
         title="字段映射"
         open={importModalOpen}
         onOk={handleMappingConfirm}
-        onCancel={() => setImportModalOpen(false)}
+        onCancel={() => {
+          setImportModalOpen(false);
+          // 如果是从预览页打开的映射弹窗，取消时回到预览页
+          if (previewData.length > 0) setPreviewOpen(true);
+        }}
         width={600}
       >
         <p style={{ marginBottom: 16, color: '#666' }}>请将上传文件的列与系统字段进行匹配：</p>
@@ -586,6 +642,7 @@ export default function Assets() {
       >
         <Space style={{ marginBottom: 12 }}>
           <Button size="small" onClick={addPreviewRow}>添加一行</Button>
+          <Button size="small" onClick={() => { setPreviewOpen(false); setImportModalOpen(true); }}>调整字段映射</Button>
           <span style={{ color: '#666', fontSize: 12 }}>共 {previewData.length} 行，标红行为名称或分类为空</span>
         </Space>
         <div style={{ maxHeight: 420, overflow: 'auto' }}>
