@@ -73,6 +73,9 @@ export default function Assets() {
   const [previewData, setPreviewData] = useState<any[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const [batchDeleting, setBatchDeleting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchAssets = async () => {
@@ -328,7 +331,7 @@ export default function Assets() {
       });
       const res = await client.post('/api/assets/batch-import', payload);
       const data = res.data;
-      const parts = [`成功导入 ${data.created} 条资产`];
+      const parts = [`处理 ${data.created + data.updated} 条资产（新建 ${data.created}，更新 ${data.updated}）`];
       if (data.persons_created > 0) {
         parts.push(`自动新建 ${data.persons_created} 个人员`);
       }
@@ -432,6 +435,28 @@ export default function Assets() {
     }
   };
 
+  const handleBatchDelete = async () => {
+    if (selectedRowKeys.length === 0) return;
+    setBatchDeleting(true);
+    try {
+      const res = await client.post('/api/assets/batch-delete', {
+        ids: selectedRowKeys.map((k) => Number(k)),
+      });
+      const data = res.data;
+      const parts = [`成功删除 ${data.deleted} 个资产`];
+      if (data.missing && data.missing.length > 0) {
+        parts.push(`${data.missing.length} 个不存在`);
+      }
+      message.success(parts.join('，'));
+      setSelectedRowKeys([]);
+      setBatchDeleteOpen(false);
+      fetchAssets();
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '批量删除失败');
+    }
+    setBatchDeleting(false);
+  };
+
   const showDetail = async (id: number) => {
     const res = await client.get(`/api/assets/${id}`);
     setDetailAsset(res.data);
@@ -474,6 +499,9 @@ export default function Assets() {
         <Button icon={<DownloadOutlined />} onClick={handleDownload}>导出数据</Button>
         <Button onClick={handleDownloadTemplate}>下载导入模板</Button>
         <Button icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()}>上传</Button>
+        <Button danger disabled={selectedRowKeys.length === 0} onClick={() => setBatchDeleteOpen(true)}>
+          批量删除{selectedRowKeys.length > 0 ? `（${selectedRowKeys.length}）` : ''}
+        </Button>
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={handleFileSelect} />
       </Space>
       <Space style={{ marginBottom: 16 }} wrap>
@@ -496,7 +524,17 @@ export default function Assets() {
         <Button onClick={fetchAssets}>筛选</Button>
       </Space>
 
-      <Table columns={columns} dataSource={assets} rowKey="id" loading={loading} showSorterTooltip={false} />
+      <Table
+        columns={columns}
+        dataSource={assets}
+        rowKey="id"
+        loading={loading}
+        showSorterTooltip={false}
+        rowSelection={{
+          selectedRowKeys,
+          onChange: (keys) => setSelectedRowKeys(keys),
+        }}
+      />
 
       <Modal title={editingAsset ? '编辑资产' : '新增资产'} open={modalOpen} onOk={handleSubmit} onCancel={() => setModalOpen(false)} width={600}>
         <Form form={form} layout="vertical">
@@ -756,6 +794,19 @@ export default function Assets() {
 
       <Modal title="确认删除" open={deleteId !== null} onOk={handleDelete} onCancel={() => setDeleteId(null)} okText="确认删除" okButtonProps={{ danger: true, style: { background: '#ff3b30', color: '#fff', border: 'none' } }}>
         <p>确定要删除这个资产吗？</p>
+      </Modal>
+
+      <Modal
+        title="确认批量删除"
+        open={batchDeleteOpen}
+        onOk={handleBatchDelete}
+        onCancel={() => setBatchDeleteOpen(false)}
+        okText="确认删除"
+        cancelText="取消"
+        confirmLoading={batchDeleting}
+        okButtonProps={{ danger: true, style: { background: '#ff3b30', color: '#fff', border: 'none' } }}
+      >
+        <p>确定要删除选中的 <strong>{selectedRowKeys.length}</strong> 个资产吗？此操作不可撤销，会同时清除相关操作日志。</p>
       </Modal>
     </div>
   );

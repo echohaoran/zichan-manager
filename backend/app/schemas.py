@@ -167,6 +167,10 @@ class DashboardStats(BaseModel):
     department_stats: List[dict] = []
 
 
+class AssetBatchDeleteRequest(BaseModel):
+    ids: List[int]
+
+
 class AssetImportItem(BaseModel):
     name: str
     category_name: str = ""
@@ -184,12 +188,14 @@ class AssetImportItem(BaseModel):
 class AssetBatchImportResponse(BaseModel):
     """批量导入资产的结果汇总。
 
-    - created: 实际创建的资产数
+    - created: 实际新建的资产数
+    - updated: 按 asset_code 命中已存在资产并更新的数量
     - persons_created: 本次导入中新建的人员数（去重后）
     - persons_matched: 命中现有人员的次数（同一人员多次出现都计入）
-    - assets: 创建出来的资产对象
+    - assets: 受影响的资产对象（新建 + 更新）
     """
     created: int
+    updated: int
     persons_created: int
     persons_matched: int
     assets: List[AssetOut]

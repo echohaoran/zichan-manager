@@ -6,7 +6,7 @@ from sqlalchemy import desc
 from typing import Optional, List
 from app.database import get_db
 from app.models import Asset, AssetLog, Category, Person, User
-from app.schemas import AssetCreate, AssetUpdate, AssetOut, AssetLogOut, AssetImportItem, AssetBatchImportResponse
+from app.schemas import AssetCreate, AssetUpdate, AssetOut, AssetLogOut, AssetImportItem, AssetBatchImportResponse, AssetBatchDeleteRequest
 from app.auth import get_current_user
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
@@ -101,8 +101,7 @@ def _parse_purchase_date(date_str):
 
 @router.post("/batch-import", response_model=AssetBatchImportResponse)
 def batch_import_assets(items: List[AssetImportItem], db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    created = []
-    # cache category name -> id
+    # 缓存分类名 -> id
     cats = {c.name: c.id for c in db.query(Category).all()}
 
     # 缓存现有人员（按去除两端空格的姓名匹配），并跟踪本批内新建的人员避免重复
@@ -110,6 +109,20 @@ def batch_import_assets(items: List[AssetImportItem], db: Session = Depends(get_
     created_persons_in_batch: dict = {}
     persons_matched = 0
     persons_new = 0
+
+    # 预加载本批可能命中的现有资产（按 asset_code 索引）
+    target_codes = {item.asset_code for item in items if item.asset_code}
+    existing_assets_by_code: dict = {}
+    if target_codes:
+        existing_assets_by_code = {
+            a.asset_code: a
+            for a in db.query(Asset).filter(Asset.asset_code.in_(target_codes)).all()
+        }
+
+    created_assets = []
+    updated_assets = []
+    # 本批内新建的资产（用于处理同批重复 asset_code：后行者 update 先行者）
+    batch_created_by_code: dict = {}
 
     for item in items:
         category_id = cats.get(item.category_name)
@@ -139,40 +152,70 @@ def batch_import_assets(items: List[AssetImportItem], db: Session = Depends(get_
             status = "领用中"
 
         purchase_date = _parse_purchase_date(item.purchase_date)
-        asset = Asset(
-            name=item.name,
-            category_id=category_id,
-            price=item.price,
-            purchase_date=purchase_date,
-            description=item.description,
-            model=item.model,
-            color=item.color,
-            asset_code=item.asset_code,
-            sn=item.sn,
-            status=status,
-            person_id=person_id,
-        )
-        db.add(asset)
-        db.flush()
 
-        # 日志：包含领用人信息，标注是否本次新建
-        log_detail = f"批量导入: {item.name}"
+        # —— 增量更新核心：按 asset_code 匹配 ——
+        matched = None
+        if item.asset_code:
+            if item.asset_code in existing_assets_by_code:
+                matched = existing_assets_by_code[item.asset_code]
+            elif item.asset_code in batch_created_by_code:
+                matched = batch_created_by_code[item.asset_code]
+
+        if matched is not None:
+            # UPDATE：覆盖所有可变字段，保留 id / created_at / asset_code
+            asset = matched
+            asset.name = item.name
+            asset.category_id = category_id
+            asset.price = item.price
+            asset.purchase_date = purchase_date
+            asset.description = item.description
+            asset.model = item.model
+            asset.color = item.color
+            asset.sn = item.sn
+            asset.status = status
+            asset.person_id = person_id
+            updated_assets.append(asset)
+            log_action = "编辑"
+            log_detail = f"批量导入更新: {item.name}"
+        else:
+            # CREATE：asset_code 为空时自动生成 wckg_XXXXX
+            asset = Asset(
+                name=item.name,
+                category_id=category_id,
+                price=item.price,
+                purchase_date=purchase_date,
+                description=item.description,
+                model=item.model,
+                color=item.color,
+                asset_code=item.asset_code or _generate_asset_code(db),
+                sn=item.sn,
+                status=status,
+                person_id=person_id,
+            )
+            db.add(asset)
+            db.flush()
+            if asset.asset_code:
+                batch_created_by_code[asset.asset_code] = asset
+            created_assets.append(asset)
+            log_action = "登记"
+            log_detail = f"批量导入: {item.name}"
+
         if person_name_resolved:
             suffix = "（新建）" if person_name_resolved in created_persons_in_batch else ""
             log_detail += f"，领用人: {person_name_resolved}{suffix}"
-        _add_log(db, asset.id, "登记", user.id, log_detail)
-
-        created.append(asset)
+        _add_log(db, asset.id, log_action, user.id, log_detail)
 
     db.commit()
-    for a in created:
+    all_affected = created_assets + updated_assets
+    for a in all_affected:
         db.refresh(a)
 
     return AssetBatchImportResponse(
-        created=len(created),
+        created=len(created_assets),
+        updated=len(updated_assets),
         persons_created=persons_new,
         persons_matched=persons_matched,
-        assets=[_asset_to_out(a, db) for a in created],
+        assets=[_asset_to_out(a, db) for a in all_affected],
     )
 
 
@@ -309,6 +352,41 @@ def delete_asset(asset_id: int, db: Session = Depends(get_db), user: User = Depe
     db.delete(asset)
     db.commit()
     return {"message": "删除成功"}
+
+
+@router.post("/batch-delete")
+def batch_delete_assets(
+    req: AssetBatchDeleteRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """批量删除资产：连带日志一起删；报告请求数 / 实际删除数 / 不存在的 id"""
+    ids = [int(i) for i in (req.ids or []) if i is not None]
+    # 去重同时保留顺序
+    seen = set()
+    unique_ids = []
+    for i in ids:
+        if i not in seen:
+            seen.add(i)
+            unique_ids.append(i)
+    if not unique_ids:
+        return {"requested": 0, "deleted": 0, "missing": []}
+
+    existing = db.query(Asset).filter(Asset.id.in_(unique_ids)).all()
+    existing_ids = {a.id for a in existing}
+    missing = [i for i in unique_ids if i not in existing_ids]
+
+    if existing:
+        db.query(AssetLog).filter(AssetLog.asset_id.in_(existing_ids)).delete(synchronize_session=False)
+        for a in existing:
+            db.delete(a)
+    db.commit()
+
+    return {
+        "requested": len(unique_ids),
+        "deleted": len(existing),
+        "missing": missing,
+    }
 
 
 def _add_log(db: Session, asset_id: int, action: str, operator_id: int, detail: str = ""):
