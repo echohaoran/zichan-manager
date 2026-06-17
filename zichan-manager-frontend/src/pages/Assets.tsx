@@ -477,14 +477,14 @@ export default function Assets() {
     { title: '状态', dataIndex: 'status', key: 'status', sorter: (a: Asset, b: Asset) => a.status.localeCompare(b.status), render: (v: string) => <Tag color={statusColors[v]}>{v}</Tag> },
     { title: '领用人', dataIndex: 'person_name', key: 'person_name', sorter: (a: Asset, b: Asset) => (a.person_name || '').localeCompare(b.person_name || '') },
     {
-      title: '操作', key: 'action',
+      title: '操作', key: 'action', width: 240, fixed: 'right',
       render: (_: any, record: Asset) => (
-        <Space>
-          {record.status === '在库' && <Button type="link" onClick={() => openCheckout(record.id)}>领用</Button>}
-          {record.status === '领用中' && <Button type="link" onClick={() => handleReturn(record.id)}>归还</Button>}
-          {record.status !== '已报废' && <Button type="link" danger onClick={() => openDispose(record.id)}>报废</Button>}
-          <Button type="link" onClick={() => openEdit(record)}>编辑</Button>
-          <Button type="link" danger onClick={() => setDeleteId(record.id)}>删除</Button>
+        <Space size="small" wrap>
+          {record.status === '在库' && <Button type="link" size="small" onClick={() => openCheckout(record.id)}>领用</Button>}
+          {record.status === '领用中' && <Button type="link" size="small" onClick={() => handleReturn(record.id)}>归还</Button>}
+          {record.status !== '已报废' && <Button type="link" size="small" danger onClick={() => openDispose(record.id)}>报废</Button>}
+          <Button type="link" size="small" onClick={() => openEdit(record)}>编辑</Button>
+          <Button type="link" size="small" danger onClick={() => setDeleteId(record.id)}>删除</Button>
         </Space>
       ),
     },
@@ -530,6 +530,7 @@ export default function Assets() {
         rowKey="id"
         loading={loading}
         showSorterTooltip={false}
+        scroll={{ x: 'max-content' }}
         rowSelection={{
           selectedRowKeys,
           onChange: (keys) => setSelectedRowKeys(keys),
