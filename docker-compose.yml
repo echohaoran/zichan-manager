@@ -8,7 +8,6 @@ services:
       - ./backend:/app
       - .:/project:rw
       - /var/run/docker.sock:/var/run/docker.sock
-      - /root/.ssh:/root/.ssh:ro
     env_file:
       - ./backend/.env
     environment:
