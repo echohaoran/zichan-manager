@@ -476,6 +476,7 @@ export default function Assets() {
     { title: '购买日期', dataIndex: 'purchase_date', key: 'purchase_date', sorter: (a: Asset, b: Asset) => dayjs(a.purchase_date).valueOf() - dayjs(b.purchase_date).valueOf(), render: (v: string) => dayjs(v).format('YYYY-MM-DD') },
     { title: '状态', dataIndex: 'status', key: 'status', sorter: (a: Asset, b: Asset) => a.status.localeCompare(b.status), render: (v: string) => <Tag color={statusColors[v]}>{v}</Tag> },
     { title: '领用人', dataIndex: 'person_name', key: 'person_name', sorter: (a: Asset, b: Asset) => (a.person_name || '').localeCompare(b.person_name || '') },
+    { title: '序列号', dataIndex: 'sn', key: 'sn', sorter: (a: Asset, b: Asset) => (a.sn || '').localeCompare(b.sn || ''), render: (v: string) => v?.replace(/^S#N:/i, '') || '' },
     {
       title: '操作', key: 'action', width: 240, fixed: 'right',
       render: (_: any, record: Asset) => (
@@ -576,7 +577,7 @@ export default function Assets() {
             <p><strong>名称：</strong>{detailAsset.name}</p>
             <p><strong>型号：</strong>{detailAsset.model || '-'}</p>
             <p><strong>颜色：</strong>{detailAsset.color || '-'}</p>
-            <p><strong>设备SN：</strong>{detailAsset.sn || '-'}</p>
+            <p><strong>设备SN：</strong>{detailAsset.sn?.replace(/^S#N:/i, '') || '-'}</p>
             <p><strong>分类：</strong>{detailAsset.category_name}</p>
             <p><strong>价格：</strong>¥{detailAsset.price.toFixed(2)}</p>
             <p><strong>购买日期：</strong>{dayjs(detailAsset.purchase_date).format('YYYY-MM-DD')}</p>
