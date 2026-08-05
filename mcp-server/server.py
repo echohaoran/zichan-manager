@@ -84,7 +84,8 @@ def search_assets(
     limit: int = 100,
     offset: int = 0,
 ) -> Any:
-    return _run(lambda: client.get("/api/assets", params=_clean(locals())))
+    params = _clean(locals())
+    return _run(lambda: client.get("/api/assets", params=params))
 
 
 @mcp.tool(description="获取单个资产的完整详情，包含操作日志（登记/编辑/领用/归还/报废记录）。")
