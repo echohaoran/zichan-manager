@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 import random
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, or_, exists
 from typing import Optional, List
 from app.database import get_db
 from app.models import Asset, AssetLog, Category, Person, User
@@ -226,6 +226,10 @@ def list_assets(
     keyword: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    person_id: Optional[int] = Query(None),
+    department_id: Optional[int] = Query(None),
+    limit: Optional[int] = Query(None, ge=1, le=1000),
+    offset: Optional[int] = Query(None, ge=0),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -235,7 +239,17 @@ def list_assets(
     if category_id:
         q = q.filter(Asset.category_id == category_id)
     if keyword:
-        q = q.filter(Asset.name.contains(keyword))
+        kw = f"%{keyword}%"
+        q = q.filter(or_(Asset.name.like(kw), Asset.asset_code.like(kw), Asset.sn.like(kw), Asset.model.like(kw)))
+    if person_id:
+        q = q.filter(Asset.person_id == person_id)
+    if department_id:
+        q = q.filter(
+            exists().where(
+                Person.id == Asset.person_id,
+                Person.department_id == department_id,
+            )
+        )
     if start_date:
         try:
             sd = datetime.strptime(start_date, "%Y-%m-%d")
@@ -250,7 +264,12 @@ def list_assets(
             q = q.filter(Asset.purchase_date < ed + td(days=1))
         except ValueError:
             pass
-    assets = q.order_by(desc(Asset.updated_at)).all()
+    q = q.order_by(desc(Asset.updated_at))
+    if offset:
+        q = q.offset(offset)
+    if limit:
+        q = q.limit(limit)
+    assets = q.all()
     return [_asset_to_out(a, db) for a in assets]
 
 

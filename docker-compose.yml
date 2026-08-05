@@ -26,3 +26,14 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+  mcp-server:
+    build:
+      context: ./mcp-server
+    ports:
+      - "8090:8090"
+    env_file:
+      - ./mcp-server/.env
+    depends_on:
+      - backend
+    restart: unless-stopped
