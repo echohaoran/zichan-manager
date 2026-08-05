@@ -22,6 +22,7 @@
 - **部门管理** - 部门增删改查，预览部门人员和资产信息
 - **数据导入导出** - Excel 批量导入导出资产数据，支持字段映射和预览编辑
 - **工作台** - 数据概览，统计图表展示
+- **MCP 外部接入** - 外部 AI Agent 通过 MCP 协议直接查询/搜索/分析/编辑资产
 
 ### 技术亮点
 
@@ -267,6 +268,54 @@ npm run dev
 - 查看部门下人员数量和资产总数
 - 点击详情可查看具体人员和资产列表
 - 支持跳转到对应的人员/资产管理页面
+
+## MCP Server（外部 Agent 接入）
+
+系统提供 MCP（Model Context Protocol）Server，供外部 AI Agent（Claude、ZCode、Cursor 等）直接**查询、搜索、分析、编辑**资产数据。所有写操作仍走现有后端 API，自动记录操作日志。
+
+### 连接信息
+
+| 项 | 值 |
+|---|---|
+| MCP URL | `http://192.168.10.241:8090/mcp` |
+| 鉴权 | `Authorization: Bearer <MCP_BEARER_TOKEN>`（Token 由管理员提供，存于生产服务器 `mcp-server/.env`，权限 600） |
+| 传输方式 | Streamable HTTP |
+
+### 工具清单（14 个）
+
+| 类别 | 工具 | 说明 |
+|---|---|---|
+| 🔍 查询 | `search_assets` | 关键词（名称/编码/序列号/型号）、状态、分类、领用人、部门、日期范围搜索，支持分页 |
+| 🔍 查询 | `get_asset` | 资产详情 + 完整操作日志 |
+| 🔍 查询 | `get_stats` / `list_categories` / `list_persons` / `list_departments` | 概览统计与参考数据 |
+| 📊 分析 | `analyze_assets` | 预聚合报告：分布/价值/购买时间跨度/最近更新/异常提示 |
+| ✏️ 编辑 | `create_asset` / `update_asset` | 创建资产 / 编辑基本信息 |
+| ✏️ 编辑 | `checkout_asset` / `return_asset` / `dispose_asset` | 领用 / 归还 / 报废状态流转 |
+| ✏️ 编辑 | `delete_asset` | ⚠️ 永久删除（含日志，须用户确认） |
+| ✏️ 编辑 | `find_or_create_person` | 查找领用人，不存在自动创建 |
+
+### 客户端配置示例
+
+在 ZCode / Claude Desktop / Cursor 等支持 MCP 的客户端中配置：
+
+```json
+{
+  "mcpServers": {
+    "zichan-assets": {
+      "url": "http://192.168.10.241:8090/mcp",
+      "apiKey": "<MCP_BEARER_TOKEN>"
+    }
+  }
+}
+```
+
+### 安全机制
+
+- 专用服务账号 `agent`（role=user，仅资产读写权限，用户管理等 admin 端点不可访问）
+- 所有写操作复用现有 API：状态机校验（如在库才能领用）+ AssetLog 全量操作日志
+- MCP 端点 Bearer Token 鉴权，端口 8090 仅监听内网
+
+> 详细接入说明（含本地开发、curl 探测、常见问题）见 [docs/mcp-server.md](./docs/mcp-server.md)。
 
 ## API 接口
 
