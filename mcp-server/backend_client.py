@@ -3,6 +3,9 @@ import os
 from typing import Any, Optional
 
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000").rstrip("/")
 AGENT_USERNAME = os.getenv("AGENT_USERNAME", "")

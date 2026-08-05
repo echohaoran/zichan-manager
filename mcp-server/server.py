@@ -34,7 +34,7 @@ class StaticTokenAuthProvider(AuthProvider):
 
     async def verify_token(self, token: str) -> Optional[AccessToken]:
         if self._token and token == self._token:
-            return AccessToken(sub="agent")
+            return AccessToken(token=token, client_id="agent", scopes=[])
         return None
 
 mcp = FastMCP(
