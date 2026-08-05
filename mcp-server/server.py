@@ -67,7 +67,8 @@ def _run(call):
 
 
 def _clean(params: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: v for k, v in params.items() if v not in (None, "")}
+    """只过滤 None，保留空串/0——update 时显式传空串表示清空字段。"""
+    return {k: v for k, v in params.items() if v is not None}
 
 
 # ---------------------------------------------------------------- 查询
